@@ -13,7 +13,9 @@ import gradio as gr
 FILES_JSON = "files.json"
 MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 CATBOX_API = "https://catbox.moe/user/api.php"
-SPACE_URL = "https://your-render-domain.com"  # Replace with your Render.com domain
+SPACE_URL = "https://your-render-domain.com"  # Replace with your Render domain
+TEMP_DIR = Path("temp_uploads")
+TEMP_DIR.mkdir(exist_ok=True)
 
 # ----------------------
 # Load saved files
@@ -32,22 +34,28 @@ def save_files():
 # Upload function
 # ----------------------
 def upload_to_catbox(file, progress=gr.Progress()):
-    filename = Path(file.name).name
-    size = os.path.getsize(file.name)
+    if file is None:
+        return "❌ No file uploaded!"
+
+    # Save uploaded file to temp folder
+    saved_file_path = TEMP_DIR / Path(file.name).name
+    file.save(saved_file_path)
+
+    size = os.path.getsize(saved_file_path)
     if size > MAX_FILE_SIZE:
         return "❌ File too large! Max 200 MB"
 
     # Simulate progress
-    chunk_size = 1024 * 1024
+    chunk_size = 1024*1024
     uploaded = 0
-    with open(file.name, "rb") as f:
+    with open(saved_file_path, "rb") as f:
         while f.read(chunk_size):
             uploaded += chunk_size
             progress(min(uploaded / size,1.0))
         f.seek(0)
 
         # Upload to Catbox
-        files_payload = {"fileToUpload": (filename,f)}
+        files_payload = {"fileToUpload": (saved_file_path.name,f)}
         data = {"reqtype":"fileupload"}
         r = requests.post(CATBOX_API, files=files_payload, data=data)
 
@@ -55,18 +63,18 @@ def upload_to_catbox(file, progress=gr.Progress()):
     if not catbox_url.startswith("http"):
         return f"❌ Upload failed: {catbox_url}"
 
-    # Generate fake ID
+    # Generate fake ID and random filename
     fake_id = secrets.token_hex(6)
-    random_filename = secrets.token_hex(5) + Path(filename).suffix
+    random_filename = secrets.token_hex(5) + saved_file_path.suffix
 
-    files[fake_id] = {"original_name": filename,"random_name": random_filename,"url": catbox_url}
+    files[fake_id] = {"original_name": saved_file_path.name,"random_name": random_filename,"url": catbox_url}
     save_files()
 
-    # Fake link + copy button
+    # Fake link + Copy button
     fake_link = f"{SPACE_URL}/download/{fake_id}"
     html = f"""
     <div style="display:flex;align-items:center;gap:10px;margin-top:5px;">
-        <a href="{fake_link}" target="_blank">{filename}</a>
+        <a href="{fake_link}" target="_blank">{saved_file_path.name}</a>
         <button onclick="navigator.clipboard.writeText('{fake_link}')"
             style="padding:4px 8px; background:#3b82f6;color:white;border:none;border-radius:5px;cursor:pointer;">
             Copy Link
@@ -96,7 +104,7 @@ app = FastAPI()
 app.mount("/", demo)  # Mount Gradio UI at root
 
 # ----------------------
-# Download route
+# Download route (streams file)
 # ----------------------
 @app.get("/download/{fake_id}")
 def download_file(fake_id: str):
@@ -119,7 +127,7 @@ def download_file(fake_id: str):
     )
 
 # ----------------------
-# Launch (for local testing)
+# Launch (local testing)
 # ----------------------
 if __name__ == "__main__":
     import uvicorn
